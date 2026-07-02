@@ -1,0 +1,237 @@
+{
+  "name": "Heartbeat Daemon — Autonomous Orchestration Cycle",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [ { "field": "minutes", "minutesInterval": 10 } ] }
+      },
+      "id": "node-schedule",
+      "name": "Every 10 Minutes — Heartbeat",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [ 0, 400 ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "c1", "name": "agent", "value": "orchestrator", "type": "string" },
+            { "id": "c2", "name": "supabaseUrl", "value": "https://YOUR_PROJECT.supabase.co", "type": "string" },
+            { "id": "c3", "name": "tasksDbId", "value": "YOUR_NOTION_TASKS_DB_ID", "type": "string" }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "node-config",
+      "name": "Workflow Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [ 220, 400 ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "signals_inbox",
+        "returnAll": true,
+        "matchType": "allFilters",
+        "filters": { "conditions": [
+          { "keyName": "processed", "condition": "eq", "keyValue": "false" },
+          { "keyName": "agent_target", "condition": "eq", "keyValue": "={{ $json.agent }}" }
+        ] }
+      },
+      "id": "node-fetch-signals",
+      "name": "Fetch Unprocessed Signals",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [ 440, 280 ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "agent_state",
+        "filters": { "conditions": [
+          { "keyName": "agent", "condition": "eq", "keyValue": "={{ $json.agent }}" }
+        ] }
+      },
+      "id": "node-fetch-state",
+      "name": "Fetch Agent State",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [ 440, 520 ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 2,
+        "options": {}
+      },
+      "id": "node-merge",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [ 660, 400 ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const signals = $('Fetch Unprocessed Signals').all().map(i => ({\n  id: i.json.id,\n  source: i.json.source,\n  message: (typeof i.json.message === 'string' ? i.json.message : i.json.message?.text || '').substring(0, 100),\n  urgency: i.json.urgency,\n  risk_tier: i.json.risk_tier\n}));\nconst agentState = $('Fetch Agent State').first()?.json || {};\nconst context = { signals, agent_state: agentState, timestamp: new Date().toISOString() };\nreturn { json: { prompt_context: JSON.stringify(context, null, 2) } };"
+      },
+      "id": "node-build-prompt",
+      "name": "Build Prompt Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [ 880, 400 ]
+    },
+    {
+      "parameters": {
+        "modelId": { "__rl": true, "value": "claude-haiku-4-5-20251001", "mode": "id" },
+        "messages": { "values": [ { "content": "={{ $json.prompt_context }}" } ] },
+        "options": {
+          "system": "You are the autonomous orchestration daemon for a multi-agent system. You run once per heartbeat. Each cycle you: (1) read current agent state, (2) read unprocessed signals, (3) decide what matters now, (4) act within strict safety bounds. Core principles: protect user safety and data integrity; refuse harmful, illegal, or exploitative actions; prefer small reversible changes over large irreversible ones. Classify each action with a risk tier R0-R4. For R3/R4, set override to 'review' or 'block'. Return a SINGLE valid JSON object only — no prose, no markdown — with keys: meta{heartbeat_id, role, risk_tier, override{type,reason}}, actions{tasks_to_create[], signals_to_mark_processed[]}, reflection{summary}. All arrays may be empty. Never truncate; always close the JSON.",
+          "maxTokens": 1200
+        }
+      },
+      "id": "node-claude",
+      "name": "Claude — Reasoning",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [ 1100, 400 ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Robust parse: a malformed model response must NEVER crash the cycle.\nlet raw = $input.first().json?.content?.[0]?.text || $input.first().json?.text || '';\nconst cleaned = raw.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/```\\s*$/i, '').trim();\nlet decisions;\ntry {\n  decisions = JSON.parse(cleaned);\n  decisions.meta = decisions.meta || {};\n  decisions.actions = decisions.actions || {};\n  decisions.actions.tasks_to_create = decisions.actions.tasks_to_create || [];\n  decisions.actions.signals_to_mark_processed = decisions.actions.signals_to_mark_processed || [];\n  decisions.reflection = decisions.reflection || { summary: '' };\n} catch (e) {\n  // Fallback: emit a valid, empty decision object and record the parse error.\n  decisions = {\n    meta: { parse_error: e.message, timestamp: new Date().toISOString() },\n    actions: { tasks_to_create: [], signals_to_mark_processed: [] },\n    reflection: { summary: 'parse_error: ' + e.message }\n  };\n}\nreturn { json: decisions };"
+      },
+      "id": "node-parse",
+      "name": "Parse Decisions (with fallback)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [ 1320, 400 ]
+    },
+    {
+      "parameters": {
+        "tableId": "heartbeat_log",
+        "fieldsUi": { "fieldValues": [
+          { "fieldId": "agent", "fieldValue": "={{ $('Workflow Configuration').first().json.agent }}" },
+          { "fieldId": "run_at", "fieldValue": "={{ $now }}" },
+          { "fieldId": "heartbeat_id", "fieldValue": "={{ $json.meta.heartbeat_id }}" },
+          { "fieldId": "risk_tier", "fieldValue": "={{ $json.meta.risk_tier }}" },
+          { "fieldId": "reflection_summary", "fieldValue": "={{ $json.reflection.summary }}" },
+          { "fieldId": "actions_json", "fieldValue": "={{ $json }}" }
+        ] }
+      },
+      "id": "node-log",
+      "name": "Write Heartbeat Log",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [ 1540, 260 ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "agent_state",
+        "filters": { "conditions": [
+          { "keyName": "agent", "condition": "eq", "keyValue": "={{ $('Workflow Configuration').first().json.agent }}" }
+        ] },
+        "fieldsUi": { "fieldValues": [
+          { "fieldId": "last_run_at", "fieldValue": "={{ $now }}" },
+          { "fieldId": "status", "fieldValue": "active" }
+        ] }
+      },
+      "id": "node-update-state",
+      "name": "Update Agent State",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [ 1540, 420 ]
+    },
+    {
+      "parameters": { "fieldToSplitOut": "actions.signals_to_mark_processed", "options": {} },
+      "id": "node-split-signals",
+      "name": "Split Signals to Mark Processed",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [ 1540, 580 ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "typeValidation": "loose", "version": 1 },
+          "conditions": [
+            { "id": "f1", "leftValue": "={{ $json }}", "operator": { "type": "string", "operation": "notEmpty" } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-filter-uuid",
+      "name": "Filter Valid UUIDs",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [ 1760, 580 ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "signals_inbox",
+        "filters": { "conditions": [
+          { "keyName": "id", "condition": "eq", "keyValue": "={{ $json }}" }
+        ] },
+        "fieldsUi": { "fieldValues": [ { "fieldId": "processed", "fieldValue": "true" } ] }
+      },
+      "id": "node-mark-processed",
+      "name": "Mark Signals Processed",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [ 1980, 580 ]
+    },
+    {
+      "parameters": { "fieldToSplitOut": "actions.tasks_to_create", "options": {} },
+      "id": "node-split-tasks",
+      "name": "Split Tasks to Create",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [ 1540, 740 ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": { "__rl": true, "mode": "id", "value": "={{ $('Workflow Configuration').first().json.tasksDbId }}" },
+        "title": "={{ $json.title }}",
+        "propertiesUi": { "propertyValues": [
+          { "key": "Description|rich_text", "type": "rich_text", "textContent": "={{ $json.description }}" },
+          { "key": "Risk Tier|rich_text", "type": "rich_text", "textContent": "={{ $json.risk_tier }}" }
+        ] },
+        "options": {}
+      },
+      "id": "node-create-task",
+      "name": "Create Task in Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [ 1760, 740 ]
+    }
+  ],
+  "connections": {
+    "Every 10 Minutes — Heartbeat": { "main": [ [ { "node": "Workflow Configuration", "type": "main", "index": 0 } ] ] },
+    "Workflow Configuration": { "main": [ [
+      { "node": "Fetch Unprocessed Signals", "type": "main", "index": 0 },
+      { "node": "Fetch Agent State", "type": "main", "index": 0 }
+    ] ] },
+    "Fetch Unprocessed Signals": { "main": [ [ { "node": "Merge Context", "type": "main", "index": 0 } ] ] },
+    "Fetch Agent State": { "main": [ [ { "node": "Merge Context", "type": "main", "index": 1 } ] ] },
+    "Merge Context": { "main": [ [ { "node": "Build Prompt Context", "type": "main", "index": 0 } ] ] },
+    "Build Prompt Context": { "main": [ [ { "node": "Claude — Reasoning", "type": "main", "index": 0 } ] ] },
+    "Claude — Reasoning": { "main": [ [ { "node": "Parse Decisions (with fallback)", "type": "main", "index": 0 } ] ] },
+    "Parse Decisions (with fallback)": { "main": [ [
+      { "node": "Write Heartbeat Log", "type": "main", "index": 0 },
+      { "node": "Update Agent State", "type": "main", "index": 0 },
+      { "node": "Split Signals to Mark Processed", "type": "main", "index": 0 },
+      { "node": "Split Tasks to Create", "type": "main", "index": 0 }
+    ] ] },
+    "Split Signals to Mark Processed": { "main": [ [ { "node": "Filter Valid UUIDs", "type": "main", "index": 0 } ] ] },
+    "Filter Valid UUIDs": { "main": [ [ { "node": "Mark Signals Processed", "type": "main", "index": 0 } ] ] },
+    "Split Tasks to Create": { "main": [ [ { "node": "Create Task in Notion", "type": "main", "index": 0 } ] ] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "description": "Sanitized reference export. Reconnect Supabase, Notion, and Anthropic credentials in n8n after import." }
+}
