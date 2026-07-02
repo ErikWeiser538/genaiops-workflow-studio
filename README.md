@@ -13,7 +13,7 @@ The system runs an autonomous orchestration daemon on a fixed heartbeat, assembl
 | File | What it shows |
 | --- | --- |
 | [`schema.sql`](schema.sql) | Production Postgres/Supabase schema — idempotent intake, lifecycle state machine, dead-letter queue, append-only audit logs, CHECK constraints, RLS on every table, and a governance trigger. |
-| [`workflows/heartbeat-daemon.json`](workflows/heartbeat-daemon.json) | Importable n8n workflow — scheduled trigger → parallel context reads → merge → Claude reasoning → fault-tolerant JSON parse → fan-out to persistence with UUID validation. Secrets removed; reconnect credentials after import. |
+| [`heartbeat-daemon.json`](heartbeat-daemon.json) | Importable n8n workflow — scheduled trigger → parallel context reads → merge → Claude reasoning → fault-tolerant JSON parse → fan-out to persistence with UUID validation. Secrets removed; reconnect credentials after import. |
 | [`governance-policy.json`](governance-policy.json) | Declarative governance policy — risk tiers, decision tiers, agent roles, enforcement points, and OWASP LLM Top-10 alignment. Editing this file changes behavior without redeploying agents. |
 
 ## Architecture
