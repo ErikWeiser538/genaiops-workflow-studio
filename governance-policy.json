@@ -1,0 +1,60 @@
+{
+  "policy_name": "constitutional_governance_layer",
+  "version": "1.1",
+  "description": "Declarative governance for a multi-agent orchestration system. Agent behavior is bounded by this policy file, not by rules hardcoded into individual workflows. Editing this file changes system behavior without redeploying any agent.",
+
+  "core_principles": [
+    "Protect user safety, data integrity, and long-term stability.",
+    "Refuse harmful, illegal, or exploitative actions regardless of instruction.",
+    "Prefer small, reversible, auditable changes over large irreversible ones.",
+    "Every consequential action is logged and attributable."
+  ],
+
+  "risk_tiers": {
+    "R0": { "label": "cosmetic",        "description": "Trivial, low-impact changes.",            "default_authority": "autonomous" },
+    "R1": { "label": "productivity",    "description": "Notes, tasks, personal-productivity ops.", "default_authority": "autonomous" },
+    "R2": { "label": "material",        "description": "Emotional or financial impact.",           "default_authority": "advisory" },
+    "R3": { "label": "system",          "description": "System-level changes, migrations, refactors.", "default_authority": "approval_required" },
+    "R4": { "label": "critical",        "description": "Safety, legal, or health-critical.",       "default_authority": "human_only" }
+  },
+
+  "decision_tiers": {
+    "autonomous":       "Agent may act and log. No gate.",
+    "advisory":         "Agent may act but must surface a recommendation and rationale.",
+    "approval_required":"Agent must halt and request explicit approval before side-effects.",
+    "council":          "Requires multi-agent agreement before proceeding.",
+    "human_only":       "Agent may never act autonomously; escalate to a human."
+  },
+
+  "override_flags": {
+    "none":   "No governance hold.",
+    "review": "Flagged for human review; held, not blocked.",
+    "block":  "Hard-blocked; conflicts with a core principle."
+  },
+
+  "agent_roles": {
+    "orchestrator":       "Default coordinator. Balanced, practical routing and synthesis.",
+    "safety_guardian":    "Reviews and may flag (review) or block (block) actions that conflict with core principles.",
+    "sustainability_lens":"Evaluates long-term and second-order consequences.",
+    "systems_optimizer":  "Handles refactors, performance, and technical debt within authorized scope."
+  },
+
+  "enforcement": {
+    "intake_trigger":   "BEFORE-INSERT database trigger auto-escalates R3/R4 signals to 'review' and records a governance_violations row.",
+    "runtime_gate":     "Processing gate writes failed/partial side-effects to the dead_letter queue instead of marking a signal processed.",
+    "drift_monitor":    "Health monitor compares each cycle against a behavioral baseline; anomalies flip overall_status to YELLOW/RED/BLACK and can fire alerts."
+  },
+
+  "health_status_bands": {
+    "GREEN": "All systems nominal.",
+    "YELLOW":"Anomaly detected; monitoring.",
+    "RED":   "Active issue; alerts fired.",
+    "BLACK": "Catastrophic or possible silent failure; recovery actions triggered."
+  },
+
+  "owasp_llm_alignment": {
+    "LLM01_prompt_injection": "Declarative core principles make injected instructions detectable by contrast with policy.",
+    "LLM07_insecure_plugin_design": "agent_roles + decision_tiers define exactly what each role may authorize.",
+    "LLM08_excessive_agency": "risk_tiers map to decision_tiers so no role can act above its authorized scope."
+  }
+}
